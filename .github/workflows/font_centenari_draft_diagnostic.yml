@@ -1,0 +1,84 @@
+name: Font del Centenari draft diagnostic
+
+on:
+  push:
+    branches:
+      - agent/font-centenari-realista-v1-20260902
+    paths:
+      - '.github/workflows/font_centenari_draft_diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  draft:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare coarse diagnostic source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p project/scripts project/renders project/docs
+          base64 -d build-assets/build_font_centenari_realista_v1.py.gz.b64 | gunzip > project/scripts/build.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('project/scripts/build.py')
+          s=p.read_text(encoding='utf-8')
+          s=re.sub(r'^VOXEL_HUMAN\s*=.*$', 'VOXEL_HUMAN=0.12', s, flags=re.M)
+          s=re.sub(r'^VOXEL_ANIMAL\s*=.*$', 'VOXEL_ANIMAL=0.13', s, flags=re.M)
+          s=s.replace('scene.render.resolution_x = 1280','scene.render.resolution_x = 720')
+          s=s.replace('scene.render.resolution_y = 720','scene.render.resolution_y = 540')
+          s=s.replace('for cam in cameras:', 'for cam in cameras[2:6]:')
+          s=s.replace('Font_del_Centenari_Tarragona_REALISTA_v1','Font_del_Centenari_Tarragona_DRAFT')
+          # Do not spend time on GLB in the diagnostic pass.
+          s=re.sub(r'\ntry:\n\s+bpy\.ops\.export_scene\.gltf\([\s\S]*?\nexcept Exception as exc:\n\s+\(DOCS/"glb_export_error\.txt"\)\.write_text\(str\(exc\),encoding=\'utf-8\'\)\n', '\n', s)
+          p.write_text(s,encoding='utf-8')
+          PY
+          python3 -m py_compile project/scripts/build.py
+
+      - name: Install Blender
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir blender && tar -xf blender.tar.xz -C blender --strip-components=1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+
+      - name: Build diagnostic closeups
+        shell: bash
+        env:
+          FONT_QUALITY: preview
+        run: |
+          set -euo pipefail
+          xvfb-run -a ./blender/blender --factory-startup --background --python project/scripts/build.py 2>&1 | tee project/docs/build.log
+          test -s project/Font_del_Centenari_Tarragona_DRAFT.blend
+
+      - name: Contact sheet
+        shell: bash
+        run: |
+          python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          from PIL import Image,ImageOps,ImageDraw
+          from pathlib import Path
+          ps=sorted(Path('project/renders').glob('*.png'))
+          cards=[]
+          for p in ps:
+              im=ImageOps.contain(Image.open(p).convert('RGB'),(640,430))
+              c=Image.new('RGB',(660,475),'white'); c.paste(im,((660-im.width)//2,5)); ImageDraw.Draw(c).text((10,445),p.stem,fill='black'); cards.append(c)
+          if cards:
+              sh=Image.new('RGB',(1320,((len(cards)+1)//2)*475),(220,220,220))
+              for i,c in enumerate(cards): sh.paste(c,((i%2)*660,(i//2)*475))
+              sh.save('project/docs/diagnostic_contact.jpg',quality=91)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Font_Centenari_DRAFT_diagnostic
+          path: project/
+          retention-days: 7
+          compression-level: 6
