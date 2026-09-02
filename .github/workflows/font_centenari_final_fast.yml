@@ -1,0 +1,127 @@
+name: Build Font del Centenari REALISTA FAST
+
+on:
+  push:
+    branches:
+      - agent/font-centenari-realista-v1-20260902
+    paths:
+      - '.github/workflows/font_centenari_final_fast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Download validated photo-derived profile model and references
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf project dist/font_centenari_fast
+          mkdir -p project/{scripts,docs,references,renders,exports} dist/font_centenari_fast
+          curl -fL --retry 4 -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9846773017/zip" -o /tmp/profile.zip
+          unzip -q -o /tmp/profile.zip -d /tmp/profile
+          blend=$(find /tmp/profile -type f -name '*.blend' -printf '%s %p\n' | sort -nr | head -1 | cut -d' ' -f2-)
+          test -s "$blend"
+          cp "$blend" project/Font_del_Centenari_Tarragona_BASE_CORREGIDA.blend
+          curl -fL --retry 4 -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9845342238/zip" -o /tmp/references.zip || true
+          [ ! -s /tmp/references.zip ] || unzip -q -o /tmp/references.zip -d project/references
+          cp font-centenari/final_v2/refine_scene.py project/scripts/refine_scene.py
+
+      - name: Install Blender 4.5.13 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o /tmp/blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir -p /tmp/blender
+          tar -xf /tmp/blender.tar.xz -C /tmp/blender --strip-components=1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+          /tmp/blender/blender --version | tee project/docs/blender_version.txt
+
+      - name: Refine, render and export
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a /tmp/blender/blender --background project/Font_del_Centenari_Tarragona_BASE_CORREGIDA.blend \
+            --python project/scripts/refine_scene.py 2>&1 | tee project/docs/refine_and_render.log
+          test -s project/Font_del_Centenari_Tarragona_REALISTA_FINAL.blend
+          xvfb-run -a /tmp/blender/blender --background project/Font_del_Centenari_Tarragona_REALISTA_FINAL.blend \
+            --python-expr "import bpy,json,pathlib; meshes=[o for o in bpy.data.objects if o.type=='MESH']; d={'file':bpy.data.filepath,'objects':len(bpy.data.objects),'meshes':len(bpy.data.meshes),'curves':len(bpy.data.curves),'materials':len(bpy.data.materials),'cameras':len(bpy.data.cameras),'lights':len(bpy.data.lights),'polygons':sum(len(o.data.polygons) for o in meshes)}; pathlib.Path('project/docs/reopen_validation.json').write_text(json.dumps(d,indent=2),encoding='utf-8'); print(d)" \
+            2>&1 | tee project/docs/reopen_log.txt
+
+      - name: Build contact sheets and compact references
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          from PIL import Image,ImageDraw
+          from pathlib import Path
+          root=Path('project')
+          refs=[]
+          for p in root.joinpath('references').rglob('*'):
+            if p.suffix.lower() not in {'.jpg','.jpeg','.png','.webp'}: continue
+            try:
+              im=Image.open(p).convert('RGB'); im.thumbnail((1600,1600))
+              q=root/'references'/'compact'/f'{len(refs)+1:02d}_{p.stem[:55]}.jpg'; q.parent.mkdir(parents=True,exist_ok=True)
+              im.save(q,quality=82,optimize=True); refs.append(q)
+            except Exception: pass
+          for p in list(root.joinpath('references').rglob('*')):
+            if p.is_file() and p.suffix.lower() in {'.jpg','.jpeg','.png','.webp'} and 'compact' not in p.parts: p.unlink()
+          renders=sorted(root.joinpath('renders').glob('*.png'))
+          def tile(p,label,w=520,h=390):
+            im=Image.open(p).convert('RGB'); im.thumbnail((w-20,h-55)); c=Image.new('RGB',(w,h),'white')
+            c.paste(im,((w-im.width)//2,8)); ImageDraw.Draw(c).text((14,h-32),label,fill='black'); return c
+          def sheet(files,path,title,cols=2):
+            if not files:return
+            rows=(len(files)+cols-1)//cols; s=Image.new('RGB',(520*cols,390*rows+48),(225,225,225)); ImageDraw.Draw(s).text((16,16),title,fill='black')
+            for i,p in enumerate(files): s.paste(tile(p,p.stem),(i%cols*520,48+i//cols*390))
+            s.save(path,quality=91)
+          sheet(renders,root/'docs'/'QA_vistes_model.jpg','FONT DEL CENTENARI — MODEL REFINAT',2)
+          sheet(refs[:18],root/'docs'/'QA_referencies.jpg','FOTOGRAFIES DE REFERÈNCIA',3)
+          if renders and refs:
+            a=Image.open(root/'docs'/'QA_referencies.jpg').convert('RGB'); b=Image.open(root/'docs'/'QA_vistes_model.jpg').convert('RGB')
+            a.thumbnail((1000,1200)); b.thumbnail((1000,1200)); c=Image.new('RGB',(2000,max(a.height,b.height)+50),(210,210,210)); c.paste(a,(0,50)); c.paste(b,(1000,50)); ImageDraw.Draw(c).text((16,16),'REFERÈNCIES / MODEL',fill='black'); c.save(root/'docs'/'comparacio_global.jpg',quality=91)
+          PY
+          find project -type f -print0 | sort -z | xargs -0 sha256sum > project/docs/SHA256SUMS.txt
+
+      - name: Package and publish branch deliverables
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp project/Font_del_Centenari_Tarragona_REALISTA_FINAL.blend dist/font_centenari_fast/
+          [ ! -s project/exports/Font_del_Centenari_Tarragona_REALISTA_FINAL.glb ] || cp project/exports/Font_del_Centenari_Tarragona_REALISTA_FINAL.glb dist/font_centenari_fast/
+          cp project/docs/QA_vistes_model.jpg dist/font_centenari_fast/
+          cp project/docs/comparacio_global.jpg dist/font_centenari_fast/
+          cp project/docs/model_report_final.json dist/font_centenari_fast/
+          cp project/docs/reopen_validation.json dist/font_centenari_fast/
+          (cd project && zip -qr ../dist/font_centenari_fast/Font_del_Centenari_Tarragona_PROJECTE_REALISTA_FAST.zip .)
+          (cd dist/font_centenari_fast && sha256sum * > SHA256SUMS.txt)
+          unzip -tq dist/font_centenari_fast/Font_del_Centenari_Tarragona_PROJECTE_REALISTA_FAST.zip
+          git config user.name 'Font Centenari build bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add dist/font_centenari_fast
+          git commit -m 'Add fast validated Font del Centenari deliverables' || true
+          git push origin HEAD:${GITHUB_REF_NAME}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Font_del_Centenari_Tarragona_REALISTA_FAST
+          path: project/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
