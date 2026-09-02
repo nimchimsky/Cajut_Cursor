@@ -53,7 +53,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d catedral_tarragona_v4/patch_facade_v4.py.gz.b64 | gzip -d > /tmp/patch_facade_v4.py
+          cat catedral_tarragona_v4/patch_facade_v4.py.gz.b64.part00 \
+              catedral_tarragona_v4/patch_facade_v4.py.gz.b64.part01 \
+              catedral_tarragona_v4/patch_facade_v4.py.gz.b64.part02 \
+              > /tmp/patch_facade_v4.py.gz.b64
+          test "$(wc -c < /tmp/patch_facade_v4.py.gz.b64)" -eq 17988
+          base64 -d /tmp/patch_facade_v4.py.gz.b64 | gzip -d > /tmp/patch_facade_v4.py
           base64 -d catedral_tarragona_v4/validate_facade_v4.py.gz.b64 | gzip -d > /tmp/validate_facade_v4.py
           python3 -m py_compile /tmp/patch_facade_v4.py /tmp/validate_facade_v4.py
 
