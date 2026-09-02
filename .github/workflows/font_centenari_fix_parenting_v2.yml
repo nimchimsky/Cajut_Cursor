@@ -1,0 +1,116 @@
+name: Build Font del Centenari REALISTA v2 transform fix
+
+on:
+  push:
+    branches:
+      - agent/font-centenari-realista-v1-20260902
+    paths:
+      - '.github/workflows/font_centenari_fix_parenting_v2.yml'
+      - 'font-centenari/fix_parenting_v2.py'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the validated v1 project
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p project
+          curl -fL --retry 5 --retry-delay 2 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9847311721/zip" \
+            -o /tmp/font_v1.zip
+          unzip -q -o /tmp/font_v1.zip -d project
+          test -s project/Font_del_Centenari_Tarragona_REALISTA_v1.blend
+          cp font-centenari/fix_parenting_v2.py project/fix_parenting_v2.py
+
+      - name: Install Blender 4.5.13 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o /tmp/blender.tar.xz \
+            https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir -p /tmp/blender
+          tar -xf /tmp/blender.tar.xz -C /tmp/blender --strip-components=1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+          /tmp/blender/blender --version
+
+      - name: Correct transforms and render v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a /tmp/blender/blender --background \
+            project/Font_del_Centenari_Tarragona_REALISTA_v1.blend \
+            --python project/fix_parenting_v2.py \
+            2>&1 | tee project/docs_v2/build_v2.log
+          test -s project/Font_del_Centenari_Tarragona_REALISTA_v2.blend
+          test -s project/renders_v2/V2_03_ASIA_ELEFANT.png
+
+      - name: Reopen the corrected blend
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a /tmp/blender/blender --background \
+            project/Font_del_Centenari_Tarragona_REALISTA_v2.blend \
+            --python-expr "import bpy,json,pathlib; d={'objects':len(bpy.data.objects),'meshes':len(bpy.data.meshes),'curves':len(bpy.data.curves),'cameras':len(bpy.data.cameras),'file':bpy.data.filepath}; pathlib.Path('project/docs_v2/reopen_v2.json').write_text(json.dumps(d,indent=2)); print(d)" \
+            2>&1 | tee project/docs_v2/reopen_v2.log
+
+      - name: Build contact sheet and exact comparison panels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageOps,ImageDraw
+          root=Path('project')
+          renders=sorted((root/'renders_v2').glob('*.png'))
+          cards=[]
+          for p in renders:
+              im=Image.open(p).convert('RGB'); im=ImageOps.contain(im,(570,400))
+              c=Image.new('RGB',(590,450),'white'); c.paste(im,((590-im.width)//2,8)); ImageDraw.Draw(c).text((12,420),p.stem,fill='black'); cards.append(c)
+          sheet=Image.new('RGB',(1180,((len(cards)+1)//2)*450),(220,220,220))
+          for i,c in enumerate(cards): sheet.paste(c,((i%2)*590,(i//2)*450))
+          sheet.save(root/'docs_v2'/'QA_v2.jpg',quality=92)
+
+          mappings={
+            'V2_03_ASIA_ELEFANT':'02_512_Font_del_Centenari_al_legoria_d_sia.jpg.jpg',
+            'V2_04_AMERICA_COCODRIL':'25_-_panoramio.jpg.jpg',
+            'V2_05_AFRICA_HIPOPOTAM':'01_511_Font_del_Centenari_al_legoria_d_frica.jpg.jpg',
+            'V2_06_EUROPA_OS':'03_513_Font_del_Centenari_al_legoria_d_Europa.jpg.jpg',
+          }
+          for cam,refname in mappings.items():
+              rp=root/'renders_v2'/f'{cam}.png'; ref=root/'references'/refname
+              if not ref.exists():
+                  # Reference paths in the artifact are flat, but tolerate nested extraction.
+                  cand=list((root/'references').rglob(refname)); ref=cand[0] if cand else ref
+              if not (rp.exists() and ref.exists()): continue
+              a=ImageOps.fit(Image.open(ref).convert('RGB'),(700,525))
+              b=ImageOps.fit(Image.open(rp).convert('RGB'),(700,525))
+              out=Image.new('RGB',(1400,570),'white'); out.paste(a,(0,0)); out.paste(b,(700,0))
+              d=ImageDraw.Draw(out); d.text((14,540),'FOTOGRAFIA REAL',fill='black'); d.text((714,540),'MODEL v2 CORREGIT',fill='black')
+              out.save(root/'docs_v2'/f'comparacio_{cam}.jpg',quality=92)
+          PY
+          find project -type f -print0 | sort -z | xargs -0 sha256sum > project/docs_v2/SHA256SUMS.txt
+
+      - name: Upload v2 for visual inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: Font_del_Centenari_REALISTA_v2_TRANSFORMS_CORREGITS
+          path: project/
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 7
