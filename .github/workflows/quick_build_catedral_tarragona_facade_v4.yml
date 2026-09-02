@@ -1,0 +1,92 @@
+name: Quick build Tarragona facade v4
+
+on:
+  push:
+    branches: [catedral-tarragona-facana-v4]
+    paths:
+      - 'catedral_tarragona_v4/**'
+      - '.github/workflows/quick_build_catedral_tarragona_facade_v4.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-and-render-front:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      CATEDRAL_OUTPUT_DIR: ${{ github.workspace }}/output
+      CATEDRAL_FAST_QA: '1'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download validated v2 base
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p base_project output
+          gh run download 33600904518 \
+            --repo nimchimsky/Cajut_Cursor \
+            --name Catedral_Tarragona_Blender_projecte_complet_v2 \
+            --dir base_project
+          cp -a base_project/. output/
+          test -s output/Catedral_de_Tarragona_reconstruccio.blend
+
+      - name: Install Blender 4.5.13 LTS and headless libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 4 \
+            -o blender.tar.xz \
+            https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          tar -xf blender.tar.xz
+          BLENDER_BIN=$(find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -name blender -perm -111 | head -n 1)
+          test -n "$BLENDER_BIN"
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libegl1 libxkbcommon0 libxi6
+
+      - name: Decode and syntax-check v4 scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d catedral_tarragona_v4/patch_facade_v4.py.gz.b64 | gzip -d > /tmp/patch_facade_v4.py
+          base64 -d catedral_tarragona_v4/validate_facade_v4.py.gz.b64 | gzip -d > /tmp/validate_facade_v4.py
+          python3 -m py_compile /tmp/patch_facade_v4.py /tmp/validate_facade_v4.py
+
+      - name: Build v4 and render frontal QA view
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a "$BLENDER_BIN" -b output/Catedral_de_Tarragona_reconstruccio.blend \
+            --python /tmp/patch_facade_v4.py \
+            2>&1 | tee output/docs/facade_v4_quick_build_console.txt
+          test -s output/Catedral_de_Tarragona_reconstruccio_v4.blend
+          test -s output/renders_v4/01_facana_ortografica_v4.png
+
+      - name: Reopen and validate v4
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a "$BLENDER_BIN" -b output/Catedral_de_Tarragona_reconstruccio_v4.blend \
+            --python /tmp/validate_facade_v4.py \
+            2>&1 | tee output/docs/facade_v4_quick_reopen_validation.txt
+          grep -q '"status": "PASS"' output/docs/facade_v4_validation.json
+
+      - name: Upload quick QA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Catedral_Tarragona_facade_v4_quick_QA
+          path: |
+            output/Catedral_de_Tarragona_reconstruccio_v4.blend
+            output/renders_v4/01_facana_ortografica_v4.png
+            output/docs/facade_v4_stats.json
+            output/docs/facade_v4_validation.json
+            output/docs/facade_v4_quick_build_console.txt
+            output/docs/facade_v4_quick_reopen_validation.txt
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 6
