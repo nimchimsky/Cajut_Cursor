@@ -1,0 +1,95 @@
+name: Download Font del Centenari references
+
+on:
+  push:
+    branches:
+      - agent/font-centenari-realista-v1-20260902
+    paths:
+      - '.github/workflows/font_centenari_references.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  references:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download Wikimedia Commons category
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p references
+          python3 -m pip install --quiet requests pillow
+          python3 - <<'PY'
+          import json, re, time
+          from pathlib import Path
+          from urllib.parse import quote
+          import requests
+          from PIL import Image, ImageOps, ImageDraw
+
+          out = Path('references')
+          api = 'https://commons.wikimedia.org/w/api.php'
+          s = requests.Session()
+          s.headers['User-Agent'] = 'OpenAI-modeling-research/1.0 (Font del Centenari reference collection)'
+
+          params = {
+              'action': 'query', 'format': 'json', 'generator': 'categorymembers',
+              'gcmtitle': 'Category:Font del Centenari', 'gcmtype': 'file',
+              'gcmlimit': '100', 'prop': 'imageinfo',
+              'iiprop': 'url|extmetadata|size', 'iiurlwidth': '2200'
+          }
+          data = s.get(api, params=params, timeout=60).json()
+          pages = sorted(data.get('query', {}).get('pages', {}).values(), key=lambda p:p.get('title',''))
+          manifest=[]
+          for i,p in enumerate(pages,1):
+              ii=(p.get('imageinfo') or [{}])[0]
+              url=ii.get('thumburl') or ii.get('url')
+              if not url: continue
+              title=p.get('title','File:unknown')
+              ext=Path(url.split('?')[0]).suffix.lower()
+              if ext not in {'.jpg','.jpeg','.png','.webp'}: ext='.jpg'
+              safe=re.sub(r'[^A-Za-z0-9._-]+','_',title.replace('File:','')).strip('_')
+              path=out/f'{i:02d}_{safe[:100]}{ext}'
+              try:
+                  r=s.get(url,timeout=120)
+                  r.raise_for_status()
+                  path.write_bytes(r.content)
+                  manifest.append({'title':title,'url':ii.get('descriptionurl'),'download_url':url,'file':path.name,'width':ii.get('thumbwidth') or ii.get('width'),'height':ii.get('thumbheight') or ii.get('height')})
+              except Exception as e:
+                  manifest.append({'title':title,'url':url,'error':str(e)})
+              time.sleep(0.1)
+          (out/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+
+          imgs=[]
+          for item in manifest:
+              fn=item.get('file')
+              if not fn: continue
+              try:
+                  im=Image.open(out/fn).convert('RGB')
+                  thumb=ImageOps.contain(im,(420,280))
+                  canvas=Image.new('RGB',(440,330),'white')
+                  canvas.paste(thumb,((440-thumb.width)//2,8))
+                  d=ImageDraw.Draw(canvas)
+                  label=item['title'].replace('File:','')[:52]
+                  d.text((10,294),label,fill='black')
+                  imgs.append(canvas)
+              except Exception:
+                  pass
+          cols=3
+          rows=(len(imgs)+cols-1)//cols
+          sheet=Image.new('RGB',(cols*440,rows*330),(220,220,220))
+          for i,im in enumerate(imgs): sheet.paste(im,((i%cols)*440,(i//cols)*330))
+          sheet.save(out/'contact_sheet.jpg',quality=91)
+          print('Downloaded',len([m for m in manifest if m.get('file')]),'reference images')
+          PY
+
+      - name: Upload references
+        uses: actions/upload-artifact@v4
+        with:
+          name: Font_Centenari_reference_photos
+          path: references/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
