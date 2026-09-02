@@ -1,0 +1,85 @@
+name: Font del Centenari profile build stages
+
+on:
+  push:
+    branches:
+      - agent/font-centenari-realista-v1-20260902
+    paths:
+      - '.github/workflows/font_centenari_profile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare instrumented source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p project/scripts project/docs project/renders
+          base64 -d build-assets/build_font_centenari_realista_v1.py.gz.b64 | gunzip > project/scripts/build.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('project/scripts/build.py'); s=p.read_text(encoding='utf-8')
+          s=re.sub(r'^VOXEL_HUMAN\s*=.*$', 'VOXEL_HUMAN=0.36', s, flags=re.M)
+          s=re.sub(r'^VOXEL_ANIMAL\s*=.*$', 'VOXEL_ANIMAL=0.38', s, flags=re.M)
+          s=s.replace('for i in range(96 if FINAL else 64):','for i in range(8):')
+          s=s.replace('for cam in cameras:', 'for cam in []:')
+          s=s.replace('Font_del_Centenari_Tarragona_REALISTA_v1','Font_del_Centenari_Tarragona_PROFILE')
+          s=s.replace("bpy.ops.export_scene.gltf(filepath=str(EXPORTS/\"Font_del_Centenari_Tarragona_PROFILE.glb\"),export_format='GLB',use_selection=False)", "print('STAGE GLB skipped', flush=True)")
+          markers={
+            '# Fountain architecture':'print(\'STAGE fountain architecture\', flush=True)\n# Fountain architecture',
+            '# Sculpture helpers':'print(\'STAGE sculpture helpers loaded\', flush=True)\n# Sculpture helpers',
+            '# ASIA / EAST':'print(\'STAGE building ASIA\', flush=True)\n# ASIA / EAST',
+            '# AMERICA / WEST':'print(\'STAGE building AMERICA\', flush=True)\n# AMERICA / WEST',
+            '# AFRICA / SOUTH':'print(\'STAGE building AFRICA\', flush=True)\n# AFRICA / SOUTH',
+            '# EUROPE / NORTH':'print(\'STAGE building EUROPE\', flush=True)\n# EUROPE / NORTH',
+            '# Urban context':'print(\'STAGE urban context\', flush=True)\n# Urban context',
+            '# Save, render, export and report':'print(\'STAGE save\', flush=True)\n# Save, render, export and report'
+          }
+          for a,b in markers.items(): s=s.replace(a,b)
+          p.write_text(s,encoding='utf-8')
+          PY
+          python3 -m py_compile project/scripts/build.py
+
+      - name: Install Blender
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir blender && tar -xf blender.tar.xz -C blender --strip-components=1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+
+      - name: Run instrumented geometry build
+        id: build
+        continue-on-error: true
+        shell: bash
+        env:
+          FONT_QUALITY: preview
+        run: |
+          set -o pipefail
+          timeout 600s xvfb-run -a ./blender/blender --factory-startup --background --python project/scripts/build.py 2>&1 | tee project/docs/profile.log
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Record output
+        if: always()
+        shell: bash
+        run: |
+          find project -maxdepth 2 -type f -printf '%p %s bytes\n' | sort > project/docs/files.txt || true
+          echo "build exit: ${{ steps.build.outputs.exit_code }}" > project/docs/result.txt
+
+      - name: Upload profile logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Font_Centenari_PROFILE_logs
+          path: project/
+          retention-days: 7
+          compression-level: 6
