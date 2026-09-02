@@ -1,0 +1,70 @@
+name: Quick render Tarragona facade v3
+
+on:
+  push:
+    branches: [catedral-tarragona-facana-v3]
+    paths:
+      - '.github/workflows/quick_render_catedral_facade_v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get v3 blend from geometry build
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input quick
+          gh run download 33615030255 --repo nimchimsky/Cajut_Cursor \
+            --name Catedral_Tarragona_projecte_v3_amb_BLEND --dir input
+          test -s input/Catedral_de_Tarragona_reconstruccio_v3.blend
+      - name: Install Blender and headless dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o blender.tar.xz \
+            https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          tar -xf blender.tar.xz
+          BLENDER_BIN=$(find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -name blender -perm -111 | head -n 1)
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libegl1 libxkbcommon0 libxi6
+      - name: Render frontal orthographic QA image
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/quick.py <<'PY'
+          import bpy
+          from pathlib import Path
+          s=bpy.context.scene
+          s.render.engine='BLENDER_EEVEE_NEXT'
+          s.render.resolution_x=700
+          s.render.resolution_y=700
+          s.render.resolution_percentage=100
+          s.render.image_settings.file_format='PNG'
+          s.render.film_transparent=False
+          cam=bpy.data.objects.get('V3_CAM_01_facana_ortografica')
+          if cam is None: raise RuntimeError('V3 front camera missing')
+          s.camera=cam
+          s.render.filepath=str(Path('quick')/'facade_v3_front_quick.png')
+          bpy.ops.render.render(write_still=True)
+          print('QUICK_RENDER_OK')
+          PY
+          xvfb-run -a "$BLENDER_BIN" -b input/Catedral_de_Tarragona_reconstruccio_v3.blend \
+            --python /tmp/quick.py
+          test -s quick/facade_v3_front_quick.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Catedral_facade_v3_quick_front
+          path: quick/facade_v3_front_quick.png
+          if-no-files-found: error
+          retention-days: 2
