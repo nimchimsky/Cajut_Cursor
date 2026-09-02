@@ -1,0 +1,93 @@
+name: Build Catedral Tarragona facade v3
+
+on:
+  push:
+    branches: [catedral-tarragona-facana-v3]
+    paths:
+      - 'catedral_tarragona_v3/**'
+      - '.github/workflows/build_catedral_tarragona_facade_v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CATEDRAL_OUTPUT_DIR: ${{ github.workspace }}/output
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download validated v2 project artifact
+        run: |
+          mkdir -p base_project output
+          gh run download 33600904518 \
+            --repo nimchimsky/Cajut_Cursor \
+            --name Catedral_Tarragona_Blender_projecte_complet_v2 \
+            --dir base_project
+          cp -a base_project/. output/
+
+      - name: Download Blender 4.5.13 LTS
+        run: |
+          curl -L --retry 5 --retry-delay 5 \
+            -o blender.tar.xz \
+            https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          tar -xf blender.tar.xz
+          BLENDER_BIN=$(find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -name blender -perm -111 | head -n 1)
+          test -n "$BLENDER_BIN"
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+          "$BLENDER_BIN" --version | head -n 2
+
+      - name: Decode the Blender patch scripts
+        run: |
+          base64 -d catedral_tarragona_v3/patch_facade_v3.py.gz.b64 | gzip -d > /tmp/patch_facade_v3.py
+          base64 -d catedral_tarragona_v3/validate_facade_v3.py.gz.b64 | gzip -d > /tmp/validate_facade_v3.py
+          python3 -m py_compile /tmp/patch_facade_v3.py /tmp/validate_facade_v3.py
+
+      - name: Rebuild evidence-informed asymmetric facade and render QA views
+        run: |
+          "$BLENDER_BIN" -b output/Catedral_de_Tarragona_reconstruccio.blend \
+            --python /tmp/patch_facade_v3.py \
+            2>&1 | tee output/docs/facade_v3_blender_console.txt
+          test -s output/Catedral_de_Tarragona_reconstruccio_v3.blend
+
+      - name: Reopen and validate the real blend file
+        run: |
+          "$BLENDER_BIN" -b output/Catedral_de_Tarragona_reconstruccio_v3.blend \
+            --python /tmp/validate_facade_v3.py \
+            2>&1 | tee output/docs/facade_v3_reopen_validation.txt
+
+      - name: Add sources and package notes
+        run: |
+          cp catedral_tarragona_v3/REFERENCES_facade_v3.md output/docs/
+          cp /tmp/patch_facade_v3.py output/scripts/
+          cp /tmp/validate_facade_v3.py output/scripts/
+          cat > output/README_V3.md <<'EOF'
+          # Catedral de Tarragona — reconstrucció v3
+
+          Fitxer principal: `Catedral_de_Tarragona_reconstruccio_v3.blend`.
+
+          Aquesta iteració substitueix la façana genèrica de la v2. Incorpora pedra central de marbre diferenciada dels murs romànics, coronament incomplet i asimètric, portalada profunda de dotze arquivoltes, programa escultòric, dues portes laterals diferents, sarcòfag de Bethesda i rosassa radiant de dotze raigs. Consulteu `docs/REFERENCES_facade_v3.md` i `docs/facade_v3_validation.json`.
+          EOF
+          find output -type f -printf '%P\t%s bytes\n' | sort > output/docs/file_manifest_v3.txt
+          (cd output && sha256sum Catedral_de_Tarragona_reconstruccio_v3.blend > docs/SHA256SUMS_v3.txt)
+          (cd output && zip -q -r Catedral_Tarragona_projecte_v3.zip . -x 'Catedral_Tarragona_projecte_v3.zip')
+          unzip -t output/Catedral_Tarragona_projecte_v3.zip | tail -n 3
+
+      - name: Upload complete v3 project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Catedral_Tarragona_projecte_v3_amb_BLEND
+          path: |
+            output/Catedral_Tarragona_projecte_v3.zip
+            output/Catedral_de_Tarragona_reconstruccio_v3.blend
+            output/renders_v3/*.png
+            output/docs/*.json
+            output/docs/*.txt
+            output/docs/*.md
+          compression-level: 6
+          retention-days: 7
