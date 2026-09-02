@@ -1,0 +1,80 @@
+name: Build Catedral Tarragona Blender fast
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recover and patch generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p project/scripts project/docs project/renders
+          sed -n "/<<'B64'/,/^          B64$/p" .github/workflows/build_catedral_tarragona.yml \
+            | sed '1d;$d;s/^          //' \
+            > project/scripts/build_cathedral.py.gz.b64
+          base64 -d project/scripts/build_cathedral.py.gz.b64 | gunzip > project/scripts/build_cathedral.py
+          rm project/scripts/build_cathedral.py.gz.b64
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('project/scripts/build_cathedral.py')
+          s = p.read_text(encoding='utf-8')
+          old = '''for cam,filename in cam_objs:\n    scene.camera=cam\n    scene.render.filepath=str(RENDERS/filename)\n    bpy.ops.render.render(write_still=True)'''
+          new = '''# Els renders de verificació es generen en una compilació separada.\nfor cam,filename in []:\n    scene.camera=cam\n    scene.render.filepath=str(RENDERS/filename)\n    bpy.ops.render.render(write_still=True)'''
+          if old not in s:
+              raise SystemExit('No s’ha trobat el bucle de renderització que cal desactivar')
+          p.write_text(s.replace(old, new), encoding='utf-8')
+          PY
+          python3 -m py_compile project/scripts/build_cathedral.py
+
+      - name: Download Blender 4.5.13 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 \
+            -o blender.tar.xz \
+            https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir blender
+          tar -xf blender.tar.xz -C blender --strip-components=1
+          ./blender/blender --version | tee project/docs/blender_version.txt
+
+      - name: Build scene and save real blend
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./blender/blender \
+            --factory-startup --background \
+            --python project/scripts/build_cathedral.py \
+            2>&1 | tee project/docs/build_log.txt
+
+      - name: Reopen and validate real blend
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s project/Catedral_de_Tarragona_reconstruccio.blend
+          ./blender/blender \
+            --background project/Catedral_de_Tarragona_reconstruccio.blend \
+            --python-expr "import bpy,json; print('VALIDATION_JSON='+json.dumps({'objects':len(bpy.data.objects),'meshes':len(bpy.data.meshes),'materials':len(bpy.data.materials),'collections':len(bpy.data.collections),'cameras':len(bpy.data.cameras),'filepath':bpy.data.filepath}))" \
+            2>&1 | tee project/docs/validation_log.txt
+          file project/Catedral_de_Tarragona_reconstruccio.blend | tee project/docs/file_type.txt
+          sha256sum project/Catedral_de_Tarragona_reconstruccio.blend | tee project/docs/SHA256SUMS.txt
+          find project -maxdepth 3 -type f -printf '%P\t%s bytes\n' | sort > project/docs/file_manifest.txt
+
+      - name: Upload validated Blender project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Catedral_Tarragona_Blender_VALIDAT
+          path: project
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 7
