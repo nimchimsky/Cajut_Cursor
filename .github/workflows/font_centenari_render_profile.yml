@@ -1,0 +1,85 @@
+name: Render Font del Centenari profile blend
+
+on:
+  push:
+    branches:
+      - agent/font-centenari-realista-v1-20260902
+    paths:
+      - '.github/workflows/font_centenari_render_profile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download validated profile blend
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p input output/renders output/docs
+          gh run download 33630958256 -n Font_Centenari_PROFILE_logs -D input
+          test -s input/Font_del_Centenari_Tarragona_PROFILE.blend
+
+      - name: Install Blender
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir blender && tar -xf blender.tar.xz -C blender --strip-components=1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+
+      - name: Render fast Workbench comparison views
+        shell: bash
+        run: |
+          cat > render_profile.py <<'PY'
+          import bpy, pathlib
+          out=pathlib.Path('output/renders'); out.mkdir(parents=True,exist_ok=True)
+          scene=bpy.context.scene
+          scene.render.engine='BLENDER_WORKBENCH'
+          scene.render.resolution_x=720; scene.render.resolution_y=540; scene.render.resolution_percentage=100
+          scene.render.image_settings.file_format='PNG'
+          scene.display.shading.light='STUDIO'; scene.display.shading.studio_light='rim.sl'
+          scene.display.shading.color_type='MATERIAL'; scene.display.shading.show_shadows=True
+          scene.display.shading.show_cavity=True; scene.display.shading.cavity_type='BOTH'
+          scene.display.shading.curvature_ridge_factor=1.5; scene.display.shading.curvature_valley_factor=1.2
+          names=['CAM_01_GENERAL_RAMBLA','CAM_02_GENERAL_OBLIQUA','CAM_03_ASIA_ELEFANT','CAM_04_AMERICA_COCODRIL','CAM_05_AFRICA_HIPOPOTAM','CAM_06_EUROPA_OS','CAM_07_ZENITAL']
+          for name in names:
+              cam=bpy.data.objects.get(name)
+              if not cam: continue
+              scene.camera=cam; scene.render.filepath=str(out/(name+'.png'))
+              bpy.ops.render.render(write_still=True)
+              print('rendered',name,flush=True)
+          PY
+          xvfb-run -a ./blender/blender --background input/Font_del_Centenari_Tarragona_PROFILE.blend --python render_profile.py 2>&1 | tee output/docs/render.log
+
+      - name: Build contact sheet
+        run: |
+          python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageOps,ImageDraw
+          ps=sorted(Path('output/renders').glob('*.png')); cards=[]
+          for p in ps:
+              im=ImageOps.contain(Image.open(p).convert('RGB'),(680,470))
+              c=Image.new('RGB',(700,515),'white'); c.paste(im,((700-im.width)//2,5)); ImageDraw.Draw(c).text((10,485),p.stem,fill='black'); cards.append(c)
+          sh=Image.new('RGB',(1400,((len(cards)+1)//2)*515),(215,215,215))
+          for i,c in enumerate(cards): sh.paste(c,((i%2)*700,(i//2)*515))
+          sh.save('output/docs/profile_contact.jpg',quality=92)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Font_Centenari_PROFILE_renders
+          path: output/
+          retention-days: 7
+          compression-level: 6
