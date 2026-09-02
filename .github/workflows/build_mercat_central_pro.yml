@@ -1,0 +1,168 @@
+name: Build Mercat Central Tarragona PRO
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build_mercat_central_pro.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare project files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf project
+          mkdir -p project/scripts project/docs project/references project/renders project/exports
+          base64 -d build-assets/build_mercat_central_pro.py.gz.b64 | gunzip > project/scripts/build_mercat_central_pro.py
+          python3 -m py_compile project/scripts/build_mercat_central_pro.py
+          cat > project/README.md <<'EOF'
+          # Mercat Central de Tarragona — model Blender PRO
+
+          Reconstrucció procedural d'alta fidelitat visual del Mercat Central de Tarragona.
+
+          ## Fitxer principal
+
+          `Mercat_Central_de_Tarragona_reconstruccio_PRO.blend`
+
+          ## Contingut
+
+          - model exterior complet a escala mètrica aproximada (75 × 35 m);
+          - quatre façanes diferenciades i coberta ceràmica policroma;
+          - estructura interior de ferro, sostre de fusta i mercat contemporani;
+          - rellotge carilló, inscripcions, ornaments, serralleria i entorn immediat;
+          - sis renders de validació;
+          - exportació GLB quan l'exportador està disponible;
+          - script generador complet i informes de validació.
+
+          ## Precisió
+
+          És una reconstrucció visual contrastada amb fonts arquitectòniques i fotografies. No és un escaneig LiDAR ni un aixecament mètric oficial.
+          EOF
+          cat > project/docs/FONTS_I_CRITERIS.md <<'EOF'
+          # Fonts, geometria i criteris de reconstrucció
+
+          ## Dades de partida
+
+          - planta rectangular d'uns **75 × 35 metres**;
+          - superfície original aproximada de **2.400–2.500 m²**;
+          - tres naus longitudinals i una nau transversal central;
+          - estructura vista de columnes de ferro colat i cintres metàl·liques;
+          - dues façanes principals amb tres grans arcs de mig punt;
+          - grans persianes metàl·liques per matisar la llum;
+          - coberta original reproduïda en la reforma de 2017, revestida amb ceràmica policroma;
+          - façana de plaça Corsini amb rellotge carilló i programa ornamental modernista.
+
+          ## Fonts principals
+
+          1. Arquitectura Catalana — fitxa del Mercat Central de Tarragona.
+          2. Ajuntament de Tarragona — Mercat Central i documentació de la remodelació.
+          3. Mercats de Tarragona — història, accessos i galeria.
+          4. Consorci de Comerç, Artesania i Moda de Catalunya — descripció arquitectònica.
+          5. Wikimedia Commons — façanes, interior i maqueta, amb llicències CC indicades al manifest.
+
+          ## Criteri de modelat
+
+          La geometria es basa en les proporcions visibles a les fotografies, les dimensions publicades i la descripció tipològica. Els ornaments escultòrics s'han reconstruït proceduralment a partir de formes modernistes equivalents i no pretenen reproduir al mil·límetre cada talla original.
+          EOF
+          cat > project/references/manifest_referencies.json <<'EOF'
+          {
+            "projecte": "Mercat Central de Tarragona — model Blender PRO",
+            "fonts": [
+              {"titol":"Mercat Central de Tarragona","url":"https://www.arquitecturacatalana.cat/ca/obres/mercat-central-de-tarragona","us":"tipologia, superfície, coberta i estructura"},
+              {"titol":"El Mercat Central de Tarragona","url":"https://ccam.gencat.cat/ca/detalls/noticia/20180528_mercat_central_tgn","us":"planta, tres naus, arcs i serralleria"},
+              {"titol":"Mercat Central","url":"https://www.tarragona.cat/comerc/mercats-i-fires/mercat-central","us":"història, reforma i materials conservats"},
+              {"titol":"Mercat Central de Tarragona","url":"https://www.mercatsdetarragona.cat/mercat-central-de-tarragona","us":"accessos i estat actual"},
+              {"titol":"Tarragona- Mercat Central - 51312447730.jpg","url":"https://commons.wikimedia.org/wiki/File:Tarragona-_Mercat_Central_-_51312447730.jpg","llicencia":"segons fitxa Wikimedia Commons","us":"façana Corsini"},
+              {"titol":"01 Mercat Central de Tarragona, estructura interior.jpg","url":"https://commons.wikimedia.org/wiki/File:01_Mercat_Central_de_Tarragona,_estructura_interior.jpg","llicencia":"CC BY-SA 4.0","us":"estructura interior"},
+              {"titol":"03 Mercat Central de Tarragona, façana c. Cristòfor Colom.jpg","url":"https://commons.wikimedia.org/wiki/File:03_Mercat_Central_de_Tarragona,_façana_c._Cristòfor_Colom.jpg","llicencia":"CC BY-SA 4.0","us":"façana Colom"},
+              {"titol":"09 Mercat Central de Tarragona, façana pl. Corsini.jpg","url":"https://commons.wikimedia.org/wiki/File:09_Mercat_Central_de_Tarragona,_façana_pl._Corsini.jpg","llicencia":"CC BY-SA 4.0","us":"façana Corsini"},
+              {"titol":"02 Mercat Central de Tarragona, maqueta.jpg","url":"https://commons.wikimedia.org/wiki/File:02_Mercat_Central_de_Tarragona,_maqueta.jpg","llicencia":"CC BY-SA 4.0","us":"coberta i volumetria"}
+            ]
+          }
+          EOF
+
+      - name: Download open reference photographs
+        shell: bash
+        run: |
+          set +e
+          curl -fL --retry 3 -o project/references/01_facana_corsini.jpg 'https://upload.wikimedia.org/wikipedia/commons/0/08/Tarragona-_Mercat_Central_-_51312447730.jpg'
+          curl -fL --retry 3 -o project/references/02_estructura_interior.jpg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/01%20Mercat%20Central%20de%20Tarragona%2C%20estructura%20interior.jpg'
+          curl -fL --retry 3 -o project/references/03_facana_colom.jpg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/03%20Mercat%20Central%20de%20Tarragona%2C%20fa%C3%A7ana%20c.%20Crist%C3%B2for%20Colom.jpg'
+          curl -fL --retry 3 -o project/references/04_facana_corsini_2022.jpg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/09%20Mercat%20Central%20de%20Tarragona%2C%20fa%C3%A7ana%20pl.%20Corsini.jpg'
+          curl -fL --retry 3 -o project/references/05_maqueta.jpg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/02%20Mercat%20Central%20de%20Tarragona%2C%20maqueta.jpg'
+          find project/references -type f -size 0 -delete
+          set -e
+
+      - name: Download Blender 4.5.13 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir blender
+          tar -xf blender.tar.xz -C blender --strip-components=1
+          ./blender/blender --version | tee project/docs/blender_version.txt
+
+      - name: Install runtime libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+
+      - name: Build and render the Blender project
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a ./blender/blender --factory-startup --background --python project/scripts/build_mercat_central_pro.py 2>&1 | tee project/docs/build_log.txt
+          test -s project/Mercat_Central_de_Tarragona_reconstruccio_PRO.blend
+
+      - name: Reopen and validate the blend file
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a ./blender/blender --background project/Mercat_Central_de_Tarragona_reconstruccio_PRO.blend --python-expr "import bpy,json,pathlib; p=pathlib.Path('project/docs/reopen_validation.json'); d={'objects':len(bpy.data.objects),'meshes':len(bpy.data.meshes),'curves':len(bpy.data.curves),'materials':len(bpy.data.materials),'cameras':len(bpy.data.cameras),'file':bpy.data.filepath}; p.write_text(json.dumps(d,indent=2),encoding='utf-8'); print(d)" 2>&1 | tee project/docs/reopen_log.txt
+          grep -q 'Mercat_Central_de_Tarragona_reconstruccio_PRO.blend' project/docs/reopen_validation.json
+
+      - name: Generate contact sheet and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw
+          from pathlib import Path
+          files=sorted(Path('project/renders').glob('*.png'))
+          thumbs=[]
+          for p in files:
+              im=Image.open(p).convert('RGB')
+              im.thumbnail((520,340))
+              canvas=Image.new('RGB',(540,390),'white')
+              canvas.paste(im,((540-im.width)//2,12))
+              ImageDraw.Draw(canvas).text((16,360),p.stem,fill='black')
+              thumbs.append(canvas)
+          if thumbs:
+              rows=(len(thumbs)+1)//2
+              sheet=Image.new('RGB',(1080,rows*390),(228,228,228))
+              for i,im in enumerate(thumbs):
+                  sheet.paste(im,((i%2)*540,(i//2)*390))
+              sheet.save('project/docs/QA_vistes_model.jpg',quality=92)
+          PY
+          find project -type f -print0 | sort -z | xargs -0 sha256sum > project/docs/SHA256SUMS.txt
+          du -ah project | sort -h > project/docs/mides_fitxers.txt
+
+      - name: Upload complete validated project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mercat_Central_Tarragona_Blender_PRO_VALIDAT
+          path: project/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
