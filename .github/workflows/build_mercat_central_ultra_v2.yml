@@ -1,0 +1,144 @@
+name: Build Mercat Central Tarragona ULTRA v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build_mercat_central_ultra_v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare complete ULTRA generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf project
+          mkdir -p project/scripts project/docs project/references project/renders project/exports
+          cat build-assets/ultra_chunks/part00.b64 build-assets/ultra_chunks/part01.b64 build-assets/ultra_chunks/part02.b64 build-assets/ultra_chunks/part03.b64 > /tmp/ultra.b64
+          test "$(wc -c < /tmp/ultra.b64)" -eq 21920
+          echo 'dacb08c335b5f629895b3ef954aa5b7d6bd4f113f471c027668772e21defee2f  /tmp/ultra.b64' | sha256sum -c -
+          base64 -d /tmp/ultra.b64 | gunzip > project/scripts/build_mercat_central_ultra.py
+          echo 'bde5ad02a0c81fbeb3f48eb82463cd6911975adfafa231325a4b4a264bdd6826  project/scripts/build_mercat_central_ultra.py' | sha256sum -c -
+          python3 -m py_compile project/scripts/build_mercat_central_ultra.py
+          cat > project/README.md <<'EOF'
+          # Mercat Central de Tarragona — reconstrucció Blender ULTRA
+
+          **Fitxer principal:** `Mercat_Central_de_Tarragona_reconstruccio_ULTRA.blend`
+
+          Reconstrucció procedural editable a escala mètrica aproximada, contrastada amb fotografies de les quatre façanes, l'interior i la maqueta de la rehabilitació.
+
+          Inclou tres naus longitudinals i la nau transversal, cobertes de volta ceràmica policroma, grans obertures amb persianes, rellotge i escut de Tarragona, estructura de ferro, mercat interior contemporani, entorn de plaça Corsini, sis càmeres i exportació GLB.
+
+          No és fotogrametria, LiDAR ni un aixecament mètric oficial. Els ornaments menors són reconstruccions visuals procedurals.
+          EOF
+          cat > project/docs/FONTS_I_CRITERIS.md <<'EOF'
+          # Fonts i criteris de reconstrucció
+
+          - planta rectangular aproximada de 75 × 35 m;
+          - tres naus longitudinals i una nau transversal central;
+          - façanes de plaça Corsini, carrer Colom, Reding i Governador González;
+          - grans arcs de mig punt i persianes metàl·liques;
+          - estructura vista de columnes de ferro colat i cintres metàl·liques;
+          - coberta restaurada amb ceràmica policroma verda i vermella;
+          - interior actual amb parades, buit central i escales mecàniques.
+
+          Les proporcions globals provenen de dimensions publicades i de la lectura creuada de fotografies i de la maqueta de la reforma. Les talles escultòriques petites són aproximacions procedurals.
+          EOF
+          cat > project/references/manifest_referencies.json <<'EOF'
+          {
+            "projecte": "Mercat Central de Tarragona — ULTRA",
+            "fonts": [
+              {"titol":"Mercat Central de Tarragona","url":"https://www.arquitecturacatalana.cat/ca/obres/mercat-central-de-tarragona","us":"superfície, estructura i obertures"},
+              {"titol":"El Mercat Central de Tarragona","url":"https://ccam.gencat.cat/ca/detalls/noticia/20180528_mercat_central_tgn","us":"planta, tres naus i arcs"},
+              {"titol":"Mercat Central","url":"https://www.tarragona.cat/comerc/mercats-i-fires/mercat-central","us":"història, reforma i materials conservats"},
+              {"titol":"Mercat Central de Tarragona","url":"https://www.mercatsdetarragona.cat/mercat-central-de-tarragona","us":"accessos i estat actual"},
+              {"titol":"Façana plaça Corsini","url":"https://commons.wikimedia.org/wiki/File:Tarragona-_Mercat_Central_-_51312447730.jpg","llicencia":"segons la fitxa de Wikimedia Commons"},
+              {"titol":"Estructura interior","url":"https://commons.wikimedia.org/wiki/File:01_Mercat_Central_de_Tarragona,_estructura_interior.jpg","llicencia":"CC BY-SA 4.0"},
+              {"titol":"Façana carrer Colom","url":"https://commons.wikimedia.org/wiki/File:03_Mercat_Central_de_Tarragona,_façana_c._Cristòfor_Colom.jpg","llicencia":"CC BY-SA 4.0"},
+              {"titol":"Maqueta de la rehabilitació","url":"https://commons.wikimedia.org/wiki/File:02_Mercat_Central_de_Tarragona,_maqueta.jpg","llicencia":"CC BY-SA 4.0"}
+            ]
+          }
+          EOF
+
+      - name: Download open reference photographs
+        shell: bash
+        run: |
+          set +e
+          curl -fL --retry 3 -o project/references/01_facana_corsini.jpg 'https://upload.wikimedia.org/wikipedia/commons/0/08/Tarragona-_Mercat_Central_-_51312447730.jpg'
+          curl -fL --retry 3 -o project/references/02_estructura_interior.jpg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/01%20Mercat%20Central%20de%20Tarragona%2C%20estructura%20interior.jpg'
+          curl -fL --retry 3 -o project/references/03_facana_colom.jpg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/03%20Mercat%20Central%20de%20Tarragona%2C%20fa%C3%A7ana%20c.%20Crist%C3%B2for%20Colom.jpg'
+          curl -fL --retry 3 -o project/references/04_facana_corsini_2022.jpg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/09%20Mercat%20Central%20de%20Tarragona%2C%20fa%C3%A7ana%20pl.%20Corsini.jpg'
+          curl -fL --retry 3 -o project/references/05_maqueta.jpg 'https://commons.wikimedia.org/wiki/Special:Redirect/file/02%20Mercat%20Central%20de%20Tarragona%2C%20maqueta.jpg'
+          find project/references -type f -size 0 -delete
+          set -e
+
+      - name: Download Blender 4.5.13 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir blender
+          tar -xf blender.tar.xz -C blender --strip-components=1
+          ./blender/blender --version | tee project/docs/blender_version.txt
+
+      - name: Install runtime libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+
+      - name: Build and render ULTRA model
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a ./blender/blender --factory-startup --background --python project/scripts/build_mercat_central_ultra.py 2>&1 | tee project/docs/build_log.txt
+          test -s project/Mercat_Central_de_Tarragona_reconstruccio_ULTRA.blend
+
+      - name: Reopen and validate blend integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a ./blender/blender --background project/Mercat_Central_de_Tarragona_reconstruccio_ULTRA.blend --python-expr "import bpy,json,pathlib; p=pathlib.Path('project/docs/reopen_validation.json'); d={'objects':len(bpy.data.objects),'meshes':len(bpy.data.meshes),'curves':len(bpy.data.curves),'materials':len(bpy.data.materials),'cameras':len(bpy.data.cameras),'lights':len(bpy.data.lights),'file':bpy.data.filepath}; p.write_text(json.dumps(d,indent=2),encoding='utf-8'); print(d)" 2>&1 | tee project/docs/reopen_log.txt
+          grep -q 'Mercat_Central_de_Tarragona_reconstruccio_ULTRA.blend' project/docs/reopen_validation.json
+
+      - name: Build QA and comparison sheets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          from PIL import Image, ImageOps, ImageDraw
+          from pathlib import Path
+          def fit(p, size): return ImageOps.fit(Image.open(p).convert('RGB'),size,method=Image.Resampling.LANCZOS)
+          files=sorted(Path('project/renders').glob('*.png'))
+          thumbs=[]
+          for p in files:
+              canvas=Image.new('RGB',(640,460),'white'); canvas.paste(fit(p,(620,410)),(10,10)); ImageDraw.Draw(canvas).text((18,430),p.stem,fill='black'); thumbs.append(canvas)
+          if thumbs:
+              sheet=Image.new('RGB',(1280,((len(thumbs)+1)//2)*460),(225,225,225))
+              for i,im in enumerate(thumbs): sheet.paste(im,((i%2)*640,(i//2)*460))
+              sheet.save('project/docs/QA_vistes_model.jpg',quality=94)
+          pairs=[('project/references/01_facana_corsini.jpg','project/renders/CAM_01_FACANA_CORSINI.png','comparacio_facana_corsini.jpg'),('project/references/05_maqueta.jpg','project/renders/CAM_05_AERIA_COBERTA.png','comparacio_coberta.jpg'),('project/references/02_estructura_interior.jpg','project/renders/CAM_06_INTERIOR.png','comparacio_interior.jpg')]
+          for ref,ren,out in pairs:
+              if Path(ref).exists() and Path(ren).exists():
+                  sheet=Image.new('RGB',(1400,545),'white'); sheet.paste(fit(ref,(700,500)),(0,0)); sheet.paste(fit(ren,(700,500)),(700,0)); d=ImageDraw.Draw(sheet); d.text((15,515),'REFERÈNCIA FOTOGRÀFICA',fill='black'); d.text((715,515),'MODEL BLENDER',fill='black'); sheet.save('project/docs/'+out,quality=94)
+          PY
+          find project -type f -print0 | sort -z | xargs -0 sha256sum > project/docs/SHA256SUMS.txt
+          du -ah project | sort -h > project/docs/mides_fitxers.txt
+
+      - name: Upload complete validated ULTRA project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mercat_Central_Tarragona_Blender_ULTRA_v2_VALIDAT
+          path: project/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
