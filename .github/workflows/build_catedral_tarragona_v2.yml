@@ -1,0 +1,72 @@
+name: Build Catedral Tarragona Blender v2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recover generator embedded in first workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p project/scripts project/docs project/renders
+          sed -n "/<<'B64'/,/^          B64$/p" .github/workflows/build_catedral_tarragona.yml \
+            | sed '1d;$d;s/^          //' \
+            > project/scripts/build_cathedral.py.gz.b64
+          base64 -d project/scripts/build_cathedral.py.gz.b64 | gunzip > project/scripts/build_cathedral.py
+          rm project/scripts/build_cathedral.py.gz.b64
+          python3 -m py_compile project/scripts/build_cathedral.py
+
+      - name: Download Blender 4.5.13 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 \
+            -o blender.tar.xz \
+            https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir blender
+          tar -xf blender.tar.xz -C blender --strip-components=1
+          ./blender/blender --version | tee project/docs/blender_version.txt
+
+      - name: Build and render scene
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+          xvfb-run -a ./blender/blender \
+            --factory-startup --background \
+            --python project/scripts/build_cathedral.py \
+            2>&1 | tee project/docs/build_log.txt
+
+      - name: Validate blend
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s project/Catedral_de_Tarragona_reconstruccio.blend
+          ./blender/blender \
+            --background project/Catedral_de_Tarragona_reconstruccio.blend \
+            --python-expr "import bpy,json; print('VALIDATION_JSON='+json.dumps({'objects':len(bpy.data.objects),'meshes':len(bpy.data.meshes),'materials':len(bpy.data.materials),'collections':len(bpy.data.collections),'filepath':bpy.data.filepath}))" \
+            2>&1 | tee project/docs/validation_log.txt
+          file project/Catedral_de_Tarragona_reconstruccio.blend | tee project/docs/file_type.txt
+          sha256sum project/Catedral_de_Tarragona_reconstruccio.blend | tee project/docs/SHA256SUMS.txt
+          find project -maxdepth 3 -type f -printf '%P\t%s bytes\n' | sort > project/docs/file_manifest.txt
+
+      - name: Upload complete project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Catedral_Tarragona_Blender_projecte_complet_v2
+          path: project
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 7
