@@ -1,0 +1,143 @@
+name: Build Font del Centenari realistic v1
+
+on:
+  push:
+    branches:
+      - agent/font-centenari-realista-v1-20260902
+    paths:
+      - '.github/workflows/font_centenari_build_v1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare project and generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf project
+          mkdir -p project/scripts project/docs project/references project/renders project/exports
+          base64 -d build-assets/build_font_centenari_realista_v1.py.gz.b64 | gunzip > project/scripts/build_font_centenari_realista_v1.py
+          python3 -m py_compile project/scripts/build_font_centenari_realista_v1.py
+          cat > project/README.md <<'EOF'
+          # Font del Centenari de Tarragona — reconstrucció realista v1
+
+          Reconstrucció procedural específica del monument de Josep Viladomat a la Rambla Nova.
+
+          Inclou el vas de doble nivell, cortina d'aigua, relleu rocós, vegetació escultòrica i els quatre grups continentals: Àsia/elefant, Amèrica/cocodril, Àfrica/hipopòtam i Europa/ós.
+
+          El fitxer principal és `Font_del_Centenari_Tarragona_REALISTA_v1.blend`.
+          EOF
+
+      - name: Download open reference photographs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet requests pillow
+          python3 - <<'PY'
+          import json,re,time
+          from pathlib import Path
+          import requests
+          out=Path('project/references')
+          api='https://commons.wikimedia.org/w/api.php'
+          s=requests.Session(); s.headers['User-Agent']='OpenAI-modeling-research/1.0'
+          params={'action':'query','format':'json','generator':'categorymembers','gcmtitle':'Category:Font del Centenari','gcmtype':'file','gcmlimit':'100','prop':'imageinfo','iiprop':'url|extmetadata|size','iiurlwidth':'2200'}
+          pages=sorted(s.get(api,params=params,timeout=60).json().get('query',{}).get('pages',{}).values(),key=lambda p:p.get('title',''))
+          manifest=[]
+          for i,p in enumerate(pages,1):
+              ii=(p.get('imageinfo') or [{}])[0]; url=ii.get('thumburl') or ii.get('url')
+              if not url: continue
+              title=p.get('title','File:unknown'); ext=Path(url.split('?')[0]).suffix.lower()
+              if ext not in {'.jpg','.jpeg','.png','.webp'}: ext='.jpg'
+              safe=re.sub(r'[^A-Za-z0-9._-]+','_',title.replace('File:','')).strip('_')
+              path=out/f'{i:02d}_{safe[:100]}{ext}'
+              try:
+                  r=s.get(url,timeout=120); r.raise_for_status(); path.write_bytes(r.content)
+                  manifest.append({'title':title,'description_url':ii.get('descriptionurl'),'download_url':url,'file':path.name,'width':ii.get('thumbwidth') or ii.get('width'),'height':ii.get('thumbheight') or ii.get('height')})
+              except Exception as e: manifest.append({'title':title,'error':str(e)})
+              time.sleep(.08)
+          (out/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('References:',len([x for x in manifest if x.get('file')]))
+          PY
+
+      - name: Download Blender 4.5.13 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir blender
+          tar -xf blender.tar.xz -C blender --strip-components=1
+          ./blender/blender --version | tee project/docs/blender_version.txt
+
+      - name: Install Blender runtime libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+
+      - name: Build and render preview
+        shell: bash
+        env:
+          FONT_QUALITY: preview
+        run: |
+          set -euo pipefail
+          xvfb-run -a ./blender/blender --factory-startup --background --python project/scripts/build_font_centenari_realista_v1.py 2>&1 | tee project/docs/build_log.txt
+          test -s project/Font_del_Centenari_Tarragona_REALISTA_v1.blend
+
+      - name: Reopen and validate blend
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a ./blender/blender --background project/Font_del_Centenari_Tarragona_REALISTA_v1.blend --python-expr "import bpy,json,pathlib; p=pathlib.Path('project/docs/reopen_validation.json'); d={'objects':len(bpy.data.objects),'meshes':len(bpy.data.meshes),'curves':len(bpy.data.curves),'materials':len(bpy.data.materials),'cameras':len(bpy.data.cameras),'lights':len(bpy.data.lights),'file':bpy.data.filepath}; p.write_text(json.dumps(d,indent=2),encoding='utf-8'); print(d)" 2>&1 | tee project/docs/reopen_log.txt
+
+      - name: Build contact sheets and comparisons
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageOps,ImageDraw
+          renders=sorted(Path('project/renders').glob('*.png'))
+          cards=[]
+          for p in renders:
+              im=Image.open(p).convert('RGB'); im=ImageOps.contain(im,(600,380))
+              c=Image.new('RGB',(620,430),'white'); c.paste(im,((620-im.width)//2,8)); ImageDraw.Draw(c).text((12,400),p.stem,fill='black'); cards.append(c)
+          if cards:
+              sh=Image.new('RGB',(1240,((len(cards)+1)//2)*430),(220,220,220))
+              for i,c in enumerate(cards): sh.paste(c,((i%2)*620,(i//2)*430))
+              sh.save('project/docs/QA_vistes_model_v1.jpg',quality=92)
+
+          refs=list(Path('project/references').glob('*'))
+          mapping={
+            'CAM_03_ASIA_ELEFANT':'al_legoria_d_sia',
+            'CAM_04_AMERICA_COCODRIL':'panoramio',
+            'CAM_05_AFRICA_HIPOPOTAM':'al_legoria_d_frica',
+            'CAM_06_EUROPA_OS':'al_legoria_d_Europa'
+          }
+          for cam,key in mapping.items():
+              rp=Path('project/renders')/(cam+'.png')
+              candidates=[p for p in refs if key.lower() in p.name.lower()]
+              if cam=='CAM_04_AMERICA_COCODRIL': candidates=sorted([p for p in refs if 'panoramio' in p.name.lower()])[-3:-2] or candidates
+              if not rp.exists() or not candidates: continue
+              a=Image.open(candidates[0]).convert('RGB'); b=Image.open(rp).convert('RGB')
+              a=ImageOps.fit(a,(720,540)); b=ImageOps.fit(b,(720,540))
+              canvas=Image.new('RGB',(1440,590),'white'); canvas.paste(a,(0,0)); canvas.paste(b,(720,0))
+              d=ImageDraw.Draw(canvas); d.text((15,555),'REFERENCIA',fill='black'); d.text((735,555),'MODEL v1',fill='black')
+              canvas.save(Path('project/docs')/('comparacio_'+cam+'.jpg'),quality=92)
+          PY
+          find project -type f -print0 | sort -z | xargs -0 sha256sum > project/docs/SHA256SUMS.txt
+
+      - name: Upload complete v1 project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Font_del_Centenari_REALISTA_v1_VALIDAT
+          path: project/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
