@@ -1,0 +1,82 @@
+name: Font del Centenari ultrafast silhouette
+
+on:
+  push:
+    branches:
+      - agent/font-centenari-realista-v1-20260902
+    paths:
+      - '.github/workflows/font_centenari_ultrafast_silhouette.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  silhouette:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare ultrafast source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p project/scripts project/renders project/docs
+          base64 -d build-assets/build_font_centenari_realista_v1.py.gz.b64 | gunzip > project/scripts/build.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('project/scripts/build.py'); s=p.read_text(encoding='utf-8')
+          s=re.sub(r'^VOXEL_HUMAN\s*=.*$', 'VOXEL_HUMAN=0.30', s, flags=re.M)
+          s=re.sub(r'^VOXEL_ANIMAL\s*=.*$', 'VOXEL_ANIMAL=0.32', s, flags=re.M)
+          s=s.replace('scene.render.resolution_x = 1280','scene.render.resolution_x = 480')
+          s=s.replace('scene.render.resolution_y = 720','scene.render.resolution_y = 360')
+          s=s.replace('for i in range(96 if FINAL else 64):','for i in range(16):')
+          s=s.replace('for cam in cameras:', 'for cam in cameras[2:6]:')
+          s=s.replace('Font_del_Centenari_Tarragona_REALISTA_v1','Font_del_Centenari_Tarragona_SILHOUETTE')
+          s=s.replace("bpy.ops.export_scene.gltf(filepath=str(EXPORTS/\"Font_del_Centenari_Tarragona_SILHOUETTE.glb\"),export_format='GLB',use_selection=False)", "print('GLB skipped in silhouette pass')")
+          # Make every subdivision modifier lighter in this temporary pass.
+          s=s.replace('render_levels=2','render_levels=1').replace('levels=2','levels=1')
+          p.write_text(s,encoding='utf-8')
+          PY
+          python3 -m py_compile project/scripts/build.py
+
+      - name: Install Blender
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir blender && tar -xf blender.tar.xz -C blender --strip-components=1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+
+      - name: Build silhouettes
+        shell: bash
+        env:
+          FONT_QUALITY: preview
+        run: |
+          set -euo pipefail
+          xvfb-run -a ./blender/blender --factory-startup --background --python project/scripts/build.py 2>&1 | tee project/docs/build.log
+          test -s project/Font_del_Centenari_Tarragona_SILHOUETTE.blend
+
+      - name: Contact sheet
+        run: |
+          python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          from PIL import Image,ImageOps,ImageDraw
+          from pathlib import Path
+          ps=sorted(Path('project/renders').glob('*.png')); cards=[]
+          for p in ps:
+              im=ImageOps.contain(Image.open(p).convert('RGB'),(480,340)); c=Image.new('RGB',(500,385),'white'); c.paste(im,((500-im.width)//2,4)); ImageDraw.Draw(c).text((8,355),p.stem,fill='black'); cards.append(c)
+          if cards:
+              sh=Image.new('RGB',(1000,((len(cards)+1)//2)*385),(215,215,215))
+              for i,c in enumerate(cards): sh.paste(c,((i%2)*500,(i//2)*385))
+              sh.save('project/docs/silhouette_contact.jpg',quality=90)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Font_Centenari_SILHOUETTE
+          path: project/
+          retention-days: 7
+          compression-level: 6
