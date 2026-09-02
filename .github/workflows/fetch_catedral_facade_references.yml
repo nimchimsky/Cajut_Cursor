@@ -1,0 +1,41 @@
+name: Fetch Tarragona Cathedral facade references
+
+on:
+  push:
+    branches: [catedral-tarragona-facana-v3]
+    paths:
+      - '.github/workflows/fetch_catedral_facade_references.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download public reference photographs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p facade_references
+          curl -fL --retry 4 -A 'Mozilla/5.0' \
+            -o facade_references/official_facade_01.jpg \
+            'https://catedraldetarragona.com/wp-content/uploads/2022/04/Catedral-tarragona-1-fachada-2.jpg'
+          curl -fL --retry 4 -A 'Mozilla/5.0' \
+            -o facade_references/official_facade_02.jpg \
+            'https://catedraldetarragona.com/wp-content/uploads/2022/04/Catedral-tarragona-1-fachada-FONDO.jpg'
+          curl -fL --retry 4 -A 'Mozilla/5.0' \
+            -o facade_references/traveler_facade_front.jpg \
+            'https://media.traveler.es/photos/62c456bda12dbfcf1e162845/master/w_1600,c_limit/2E3HTTA.jpg'
+          file facade_references/*
+          sha256sum facade_references/* > facade_references/SHA256SUMS.txt
+      - name: Upload reference set for visual QA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tarragona_Cathedral_facade_reference_QA
+          path: facade_references
+          if-no-files-found: error
+          retention-days: 2
