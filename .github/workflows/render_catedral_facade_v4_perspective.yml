@@ -1,0 +1,71 @@
+name: Render Tarragona facade v4 perspective QA
+
+on:
+  push:
+    branches: [catedral-tarragona-facana-v4]
+    paths:
+      - '.github/workflows/render_catedral_facade_v4_perspective.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download validated v4 blend
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input qa
+          gh run download 33618242402 --repo nimchimsky/Cajut_Cursor \
+            --name Catedral_Tarragona_facade_v4_quick_QA --dir input
+          test -s input/Catedral_de_Tarragona_reconstruccio_v4.blend
+      - name: Install Blender and rendering libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 -o blender.tar.xz \
+            https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          tar -xf blender.tar.xz
+          BLENDER_BIN=$(find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -name blender -perm -111 | head -n 1)
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libegl1 libxkbcommon0 libxi6
+      - name: Render photographic perspective, portal and rose
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/render.py <<'PY'
+          import bpy
+          from pathlib import Path
+          s=bpy.context.scene
+          s.render.engine='BLENDER_EEVEE_NEXT'
+          s.render.resolution_x=620
+          s.render.resolution_y=620
+          s.render.resolution_percentage=100
+          s.render.image_settings.file_format='PNG'
+          for name,fn in [
+              ('V4_CAM_02_facana_perspectiva','facade_v4_perspective.png'),
+              ('V4_CAM_03_portalada','facade_v4_portal.png'),
+              ('V4_CAM_04_rosassa','facade_v4_rose.png')]:
+              cam=bpy.data.objects.get(name)
+              if cam is None: raise RuntimeError(name)
+              s.camera=cam; s.render.filepath=str(Path('qa')/fn)
+              bpy.ops.render.render(write_still=True)
+          print('PERSPECTIVE_QA_OK')
+          PY
+          xvfb-run -a "$BLENDER_BIN" -b input/Catedral_de_Tarragona_reconstruccio_v4.blend --python /tmp/render.py
+          test "$(find qa -type f -name '*.png' | wc -l)" -eq 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Catedral_Tarragona_facade_v4_perspective_QA
+          path: qa/*.png
+          if-no-files-found: error
+          retention-days: 2
