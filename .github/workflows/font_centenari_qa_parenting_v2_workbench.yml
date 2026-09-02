@@ -1,0 +1,66 @@
+name: QA Font del Centenari v2 Workbench
+
+on:
+  push:
+    branches:
+      - agent/font-centenari-realista-v1-20260902
+    paths:
+      - '.github/workflows/font_centenari_qa_parenting_v2_workbench.yml'
+      - 'font-centenari/qa_parenting_v2_workbench.py'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download v1 blend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir project
+          curl -fL --retry 5 -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9847311721/zip" -o /tmp/v1.zip
+          unzip -q /tmp/v1.zip -d project
+          cp font-centenari/qa_parenting_v2_workbench.py project/qa_parenting_v2_workbench.py
+      - name: Install Blender
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 -o /tmp/blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz
+          mkdir /tmp/blender
+          tar -xf /tmp/blender.tar.xz -C /tmp/blender --strip-components=1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1 libxkbcommon0 libxi6
+      - name: Render corrected QA views
+        run: |
+          set -euo pipefail
+          xvfb-run -a /tmp/blender/blender --background project/Font_del_Centenari_Tarragona_REALISTA_v1.blend --python project/qa_parenting_v2_workbench.py 2>&1 | tee project/qa_v2_workbench/build.log
+          test -s project/qa_v2_workbench/QA_03_ASIA.png
+      - name: Contact sheet
+        run: |
+          python3 -m pip install --quiet pillow
+          python3 - <<'PY'
+          from PIL import Image,ImageOps,ImageDraw
+          from pathlib import Path
+          root=Path('project/qa_v2_workbench'); files=sorted(root.glob('QA_*.png')); cards=[]
+          for p in files:
+              im=ImageOps.contain(Image.open(p).convert('RGB'),(570,390)); c=Image.new('RGB',(590,440),'white'); c.paste(im,((590-im.width)//2,8)); ImageDraw.Draw(c).text((12,410),p.stem,fill='black'); cards.append(c)
+          sh=Image.new('RGB',(1180,((len(cards)+1)//2)*440),(220,220,220))
+          for i,c in enumerate(cards): sh.paste(c,((i%2)*590,(i//2)*440))
+          sh.save(root/'CONTACT_SHEET_QA_V2.jpg',quality=92)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Font_Centenari_QA_V2_PARENTING_CORREGIT
+          path: |
+            project/qa_v2_workbench/
+            project/Font_del_Centenari_Tarragona_QA_v2.blend
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 7
